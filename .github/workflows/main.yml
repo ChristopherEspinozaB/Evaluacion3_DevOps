@@ -44,6 +44,7 @@ jobs:
           echo "coverage=${COV}" >> $GITHUB_OUTPUT
 
       - name: Análisis estático y Quality Gate en SonarCloud (Bloqueante)
+        if: github.actor != 'dependabot[bot]'
         working-directory: backend
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
