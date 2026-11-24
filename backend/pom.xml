@@ -19,13 +19,23 @@
         <tomcat.version>10.1.59</tomcat.version>
         <jackson-bom.version>2.22.3</jackson-bom.version>
         <spring-framework.version>6.2.19</spring-framework.version>
-        <spring-data-commons.version>3.5.12</spring-data-commons.version>
         <micrometer.version>1.15.12</micrometer.version>
         <sonar.projectKey>ChristopherEspinozaB_Evaluacion3_DevOps</sonar.projectKey>
         <sonar.organization>christopherespinozab</sonar.organization>
         <sonar.host.url>https://sonarcloud.io</sonar.host.url>
         <sonar.coverage.jacoco.xmlReportPaths>target/site/jacoco/jacoco.xml</sonar.coverage.jacoco.xmlReportPaths>
     </properties>
+
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>org.springframework.data</groupId>
+                <artifactId>spring-data-commons</artifactId>
+                <version>3.5.12</version>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
     <dependencies>
         <dependency>
             <groupId>org.springframework.boot</groupId>
