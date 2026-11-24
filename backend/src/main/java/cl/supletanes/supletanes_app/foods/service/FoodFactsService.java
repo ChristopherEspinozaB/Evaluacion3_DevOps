@@ -15,6 +15,10 @@ public class FoodFactsService {
 
     private final RestTemplate restTemplate;
 
+    public FoodFactsService() {
+        this.restTemplate = new RestTemplate();
+    }
+
     public FoodFactsService(RestTemplate restTemplate) {
         this.restTemplate = restTemplate;
     }
