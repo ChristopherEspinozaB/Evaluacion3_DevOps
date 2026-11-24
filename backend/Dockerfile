@@ -1,32 +1,18 @@
-
-# ETAPA 1: Build
-FROM eclipse-temurin:21-jdk-alpine AS build
+FROM maven:3.9-eclipse-temurin-17 AS build
 WORKDIR /app
-
-COPY .mvn/ .mvn
-COPY mvnw pom.xml ./
-
-RUN sed -i 's/\r$//' mvnw && chmod +x mvnw
-RUN ./mvnw dependency:go-offline -B
-
+COPY pom.xml .
+RUN mvn dependency:go-offline -B
 COPY src ./src
-RUN ./mvnw clean package -DskipTests -B
+RUN mvn clean package -DskipTests -B
 
-# ETAPA 2: Runtime (liviana, sin root)
-FROM eclipse-temurin:21-jre-alpine
-
-RUN addgroup -S app && adduser -S app -G app
+FROM eclipse-temurin:17-jre-jammy
+RUN apt-get update && apt-get install -y --no-install-recommends curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd -g 10001 appgroup \
+    && useradd -u 10001 -g appgroup -s /bin/sh appuser
 WORKDIR /app
-
 COPY --from=build /app/target/*.jar app.jar
-
-USER app
-
-ENV JAVA_OPTS="-XX:MaxRAMPercentage=75"
-
+RUN chown -R appuser:appgroup /app
+USER appuser
 EXPOSE 8080
-
-HEALTHCHECK --interval=30s --timeout=3s --start-period=60s --retries=3 \
-  CMD wget -qO- http://localhost:8080/actuator/health || exit 1
-
-ENTRYPOINT ["sh", "-c", "java $JAVA_OPTS -jar app.jar"]
+ENTRYPOINT ["java", "-XX:MaxRAMPercentage=75.0", "-jar", "app.jar"]

@@ -1,0 +1,159 @@
+name: CI/CD Observabilidad y Cumplimiento - Supletanes
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  AWS_REGION: us-east-1
+  CLUSTER: supletanes-ecs
+  NAMESPACE: supletanes.local
+  ECR_REPOSITORY: supletanes-app
+
+jobs:
+  quality-and-security:
+    name: 1. Calidad, Cobertura y Seguridad (Policy Gate)
+    runs-on: ubuntu-latest
+    outputs:
+      coverage: ${{ steps.jacoco.outputs.coverage }}
+    steps:
+      - name: Checkout del código
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configurar JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: 'maven'
+
+      - name: Ejecutar pruebas unitarias y reporte JaCoCo
+        working-directory: backend
+        run: mvn test jacoco:report
+
+      - name: Calcular porcentaje de cobertura JaCoCo
+        id: jacoco
+        working-directory: backend
+        run: |
+          COV=$(awk -F"," 'NR>1 { instructions += $4 + $5; covered += $5 } END { if (instructions > 0) printf "%.2f", 100*covered/instructions; else print "0" }' target/site/jacoco/jacoco.csv)
+          echo "Cobertura calculada: ${COV}%"
+          echo "coverage=${COV}" >> $GITHUB_OUTPUT
+
+      - name: Análisis estático y Quality Gate en SonarCloud (Bloqueante)
+        working-directory: backend
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: |
+          mvn sonar:sonar \
+            -Dsonar.projectKey=${{ secrets.SONAR_PROJECT_KEY }} \
+            -Dsonar.organization=${{ secrets.SONAR_ORGANIZATION }} \
+            -Dsonar.host.url=https://sonarcloud.io \
+            -Dsonar.qualitygate.wait=true
+
+      - name: Auditoría de vulnerabilidades en código y dependencias (Trivy - Bloqueante)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: 'fs'
+          scan-ref: 'backend'
+          severity: 'CRITICAL,HIGH'
+          exit-code: '1'
+
+  deploy-aws:
+    name: 2. Build, Auditoría Contenedor y Despliegue en AWS ECS
+    needs: quality-and-security
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout del código
+        uses: actions/checkout@v4
+
+      - name: Configurar credenciales AWS Academy
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login en Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build de imagen Docker
+        env:
+          IMAGE_TAG: ${{ github.sha }}
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        run: |
+          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG ./backend
+
+      - name: Auditoría de seguridad de la imagen Docker (Trivy - Bloqueante)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: '${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}'
+          format: 'table'
+          exit-code: '1'
+          ignore-unfixed: true
+          severity: 'CRITICAL'
+
+      - name: Push imagen a Amazon ECR
+        env:
+          IMAGE_TAG: ${{ github.sha }}
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        run: |
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+
+      - name: Desplegar servicios en ECS Fargate + Service Connect y medir tiempo
+        env:
+          ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+          SUBNET1: ${{ secrets.AWS_SUBNET1 }}
+          SUBNET2: ${{ secrets.AWS_SUBNET2 }}
+          SG_ID: ${{ secrets.AWS_SG_ID }}
+          IMAGE_URI: ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}
+          COVERAGE: ${{ needs.quality-and-security.outputs.coverage }}
+        run: |
+          START_TIME=$(date +%s)
+          export LAB_ROLE_ARN="arn:aws:iam::${ACCOUNT_ID}:role/LabRole"
+
+          sed -i 's/\r$//' infra/ecs/render.sh
+          chmod +x infra/ecs/render.sh
+          ./infra/ecs/render.sh
+
+          aws ecs register-task-definition --cli-input-json file://infra/ecs/out/td-mysql.json
+          aws ecs register-task-definition --cli-input-json file://infra/ecs/out/td-app.json
+          aws ecs register-task-definition --cli-input-json file://infra/ecs/out/td-client.json
+
+          if [ "$(aws ecs describe-services --cluster $CLUSTER --services mysql --query 'services[0].status' --output text)" != "ACTIVE" ]; then
+            aws ecs create-service --cli-input-json file://infra/ecs/out/svc-mysql.json
+          fi
+          aws ecs wait services-stable --cluster $CLUSTER --services mysql
+
+          if [ "$(aws ecs describe-services --cluster $CLUSTER --services supletanes-app --query 'services[0].status' --output text)" != "ACTIVE" ]; then
+            aws ecs create-service --cli-input-json file://infra/ecs/out/svc-app.json
+          else
+            aws ecs update-service --cluster $CLUSTER --service supletanes-app --task-definition supletanes-app --force-new-deployment
+          fi
+          aws ecs wait services-stable --cluster $CLUSTER --services supletanes-app
+
+          if [ "$(aws ecs describe-services --cluster $CLUSTER --services client --query 'services[0].status' --output text)" != "ACTIVE" ]; then
+            aws ecs create-service --cli-input-json file://infra/ecs/out/svc-client.json
+          fi
+
+          aws cloudwatch put-dashboard --dashboard-name "Dashboard-Mesh-supletanes" --dashboard-body file://infra/ecs/out/dashboard.json
+
+          END_TIME=$(date +%s)
+          DEPLOY_SECONDS=$((END_TIME - START_TIME))
+          echo "Despliegue completado en ${DEPLOY_SECONDS} segundos."
+
+          aws cloudwatch put-metric-data --namespace "Supletanes/CICD" \
+            --metric-name "DeploymentDurationSeconds" \
+            --dimensions Service=supletanes-app \
+            --value $DEPLOY_SECONDS --unit Seconds
+
+          aws cloudwatch put-metric-data --namespace "Supletanes/CICD" \
+            --metric-name "TestCoveragePercent" \
+            --dimensions Service=supletanes-app \
+            --value $COVERAGE --unit Percent

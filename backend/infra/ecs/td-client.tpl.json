@@ -1,0 +1,25 @@
+{
+  "family": "supletanes-client",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "256",
+  "memory": "512",
+  "executionRoleArn": "${LAB_ROLE_ARN}",
+  "taskRoleArn": "${LAB_ROLE_ARN}",
+  "containerDefinitions": [
+    {
+      "name": "client",
+      "image": "curlimages/curl:8.10.1",
+      "essential": true,
+      "command": ["sh", "-c", "while true; do curl -s -o /dev/null http://supletanes-app:8080/actuator/health; sleep 1; done"],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/supletanes",
+          "awslogs-region": "${AWS_REGION}",
+          "awslogs-stream-prefix": "client"
+        }
+      }
+    }
+  ]
+}

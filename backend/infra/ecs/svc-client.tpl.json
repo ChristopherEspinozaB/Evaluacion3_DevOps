@@ -1,0 +1,18 @@
+{
+  "cluster": "${CLUSTER}",
+  "serviceName": "client",
+  "taskDefinition": "supletanes-client",
+  "desiredCount": 1,
+  "launchType": "FARGATE",
+  "networkConfiguration": {
+    "awsvpcConfiguration": {
+      "subnets": ["${SUBNET1}", "${SUBNET2}"],
+      "securityGroups": ["${SG_ID}"],
+      "assignPublicIp": "ENABLED"
+    }
+  },
+  "serviceConnectConfiguration": {
+    "enabled": true,
+    "namespace": "${NAMESPACE}"
+  }
+}

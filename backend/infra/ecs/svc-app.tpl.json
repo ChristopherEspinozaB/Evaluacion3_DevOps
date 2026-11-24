@@ -1,0 +1,25 @@
+{
+  "cluster": "${CLUSTER}",
+  "serviceName": "supletanes-app",
+  "taskDefinition": "supletanes-app",
+  "desiredCount": 2,
+  "launchType": "FARGATE",
+  "networkConfiguration": {
+    "awsvpcConfiguration": {
+      "subnets": ["${SUBNET1}", "${SUBNET2}"],
+      "securityGroups": ["${SG_ID}"],
+      "assignPublicIp": "ENABLED"
+    }
+  },
+  "serviceConnectConfiguration": {
+    "enabled": true,
+    "namespace": "${NAMESPACE}",
+    "services": [
+      {
+        "portName": "http-port",
+        "discoveryName": "supletanes-app",
+        "clientAliases": [{ "port": 8080, "dnsName": "supletanes-app" }]
+      }
+    ]
+  }
+}

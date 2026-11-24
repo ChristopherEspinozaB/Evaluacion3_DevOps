@@ -1,0 +1,39 @@
+{
+  "family": "supletanes-app",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "512",
+  "memory": "1024",
+  "executionRoleArn": "${LAB_ROLE_ARN}",
+  "taskRoleArn": "${LAB_ROLE_ARN}",
+  "containerDefinitions": [
+    {
+      "name": "supletanes-app",
+      "image": "${IMAGE_URI}",
+      "essential": true,
+      "portMappings": [
+        { "name": "http-port", "containerPort": 8080, "protocol": "tcp", "appProtocol": "http" }
+      ],
+      "environment": [
+        { "name": "SPRING_DATASOURCE_URL", "value": "jdbc:mysql://mysql:3306/supletanes_db?createDatabaseIfNotExist=true&useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC" },
+        { "name": "SPRING_DATASOURCE_USERNAME", "value": "root" },
+        { "name": "SPRING_DATASOURCE_PASSWORD", "value": "rootpass" }
+      ],
+      "healthCheck": {
+        "command": ["CMD-SHELL", "curl -sf http://localhost:8080/actuator/health/liveness || exit 1"],
+        "interval": 15,
+        "timeout": 5,
+        "retries": 3,
+        "startPeriod": 90
+      },
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/supletanes",
+          "awslogs-region": "${AWS_REGION}",
+          "awslogs-stream-prefix": "app"
+        }
+      }
+    }
+  ]
+}
