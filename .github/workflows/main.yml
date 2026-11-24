@@ -55,7 +55,7 @@ jobs:
             -Dsonar.qualitygate.wait=true
 
       - name: Auditoría de vulnerabilidades en código y dependencias (Trivy - Bloqueante)
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: 'fs'
           scan-ref: 'backend'
@@ -91,7 +91,7 @@ jobs:
           docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG ./backend
 
       - name: Auditoría de seguridad de la imagen Docker (Trivy - Bloqueante)
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: '${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}'
           format: 'table'
