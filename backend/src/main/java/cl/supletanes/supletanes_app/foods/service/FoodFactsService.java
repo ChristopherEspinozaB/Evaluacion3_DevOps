@@ -7,6 +7,8 @@ import org.springframework.web.client.RestTemplate;
 
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
+import java.util.Collections;
+import java.util.List;
 
 @Service
 public class FoodFactsService {
@@ -30,7 +32,33 @@ public class FoodFactsService {
             return null;
         }
 
-        OpenFoodResponse.Product p = response.getProduct();
+        return mapToFoodDTO(response.getProduct());
+    }
+
+    public List<FoodDTO> searchProductsByName(String name) {
+        if (name == null || name.isBlank()) {
+            throw new IllegalArgumentException("Nombre de alimento inválido");
+        }
+
+        String encodedName = URLEncoder.encode(name.trim(), StandardCharsets.UTF_8);
+        String url = "https://world.openfoodfacts.org/cgi/search.pl?search_terms="
+                + encodedName
+                + "&search_simple=1&action=process&json=1";
+
+        OpenFoodResponse response = restTemplate.getForObject(url, OpenFoodResponse.class);
+        if (response == null || response.getProduct() == null) {
+            return Collections.emptyList();
+        }
+
+        FoodDTO dto = mapToFoodDTO(response.getProduct());
+        return dto != null ? List.of(dto) : Collections.emptyList();
+    }
+
+    private FoodDTO mapToFoodDTO(OpenFoodResponse.Product p) {
+        if (p == null) {
+            return null;
+        }
+
         OpenFoodResponse.Nutriments n = p.getNutriments();
 
         Double calorias = n != null ? n.getEnergy_kcal_100g() : null;
