@@ -31,6 +31,22 @@ jobs:
           distribution: 'temurin'
           cache: 'maven'
 
+      - name: Configurar mirror Maven Central (evita error 429)
+        run: |
+          mkdir -p ~/.m2
+          cat << 'EOF' > ~/.m2/settings.xml
+          <settings>
+            <mirrors>
+              <mirror>
+                <id>google-maven-central</id>
+                <name>GCS Maven Central mirror</name>
+                <url>https://maven-central.storage-download.googleapis.com/maven2</url>
+                <mirrorOf>central</mirrorOf>
+              </mirror>
+            </mirrors>
+          </settings>
+          EOF
+
       - name: Ejecutar pruebas unitarias y reporte JaCoCo
         working-directory: backend
         run: mvn test jacoco:report
