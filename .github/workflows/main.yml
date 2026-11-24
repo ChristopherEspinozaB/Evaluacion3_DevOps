@@ -144,6 +144,25 @@ jobs:
           START_TIME=$(date +%s)
           export LAB_ROLE_ARN="arn:aws:iam::${ACCOUNT_ID}:role/LabRole"
 
+          aws logs create-log-group --log-group-name "/ecs/supletanes" --region $AWS_REGION 2>/dev/null || true
+
+          if ! aws servicediscovery list-namespaces --region $AWS_REGION --query "Namespaces[?Name=='$NAMESPACE'].Id" --output text | grep -q .; then
+            OP_ID=$(aws servicediscovery create-http-namespace --name "$NAMESPACE" --region $AWS_REGION --query 'OperationId' --output text)
+            for i in $(seq 1 30); do
+              STATUS=$(aws servicediscovery get-operation --operation-id "$OP_ID" --region $AWS_REGION --query 'Operation.Status' --output text)
+              [ "$STATUS" = "SUCCESS" ] && break
+              sleep 2
+            done
+          fi
+
+          CLUSTER_STATUS=$(aws ecs describe-clusters --clusters "$CLUSTER" --region $AWS_REGION --query 'clusters[0].status' --output text)
+          if [ "$CLUSTER_STATUS" != "ACTIVE" ]; then
+            aws ecs create-cluster \
+              --cluster-name "$CLUSTER" \
+              --service-connect-defaults namespace="$NAMESPACE" \
+              --region $AWS_REGION >/dev/null
+          fi
+
           sed -i 's/\r$//' infra/ecs/render.sh
           chmod +x infra/ecs/render.sh
           ./infra/ecs/render.sh
