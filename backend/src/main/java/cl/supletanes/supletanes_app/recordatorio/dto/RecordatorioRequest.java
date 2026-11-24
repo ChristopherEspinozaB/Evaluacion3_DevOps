@@ -1,8 +1,8 @@
 package cl.supletanes.supletanes_app.recordatorio.dto;
 
-import lombok.Data;
-
 import java.time.LocalDateTime;
+
+import lombok.Data;
 
 @Data
 public class RecordatorioRequest {
