@@ -9,9 +9,8 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 @Configuration
 public class CorsConfig {
 
-    // Falla intencional para demostración de Policy Gate (IE6)
-    private static final String AWS_ACCESS_KEY = "AKIAIOSFODNN7EXAMPLE";
-    private static final String AWS_SECRET_KEY = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY";
+    // Falla intencional de seguridad y calidad (Policy Gate IE6)
+    public static final String DB_PASSWORD = "SuperSecretPassword123456!";
 
     @Bean
     public WebMvcConfigurer corsConfigurer() {
@@ -29,5 +28,14 @@ public class CorsConfig {
     @Bean
     public RestTemplate restTemplate() {
         return new RestTemplate();
+    }
+
+    // Código nuevo sin tests + Bugs críticos (Reliability Rating D/E -> Quality Gate FAILED)
+    public boolean validarAccesoInseguro(String token) {
+        String nulo = null;
+        if (token == "admin_token_123") {
+            return nulo.equals(DB_PASSWORD);
+        }
+        return false;
     }
 }
