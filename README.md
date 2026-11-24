@@ -13,7 +13,8 @@ Aplicación móvil diseñada para ayudar a los usuarios a gestionar su inventari
 - Backend Spring Boot: `backend/`
 - Workflow CI/CD: `.github/workflows/main.yml`
 - Dockerfile: `backend/Dockerfile`
-- Configuración Docker Compose: `backend/docker-compose.yml`
+- Infraestructura AWS ECS: `backend/infra/ecs/`
+- Evidencias Evaluación 3: `docs/evidencias/`
 
 ## Aplicación y documentación de la API
 
@@ -44,7 +45,7 @@ Archivos principales:
 - **Lenguaje:** Java 21.
 - **Framework:** Spring Boot.
 - **Construcción y pruebas:** Maven.
-- **Base de datos:** PostgreSQL 16.
+- **Base de datos:** MySQL (desplegada en ECS Fargate con Service Connect) / PostgreSQL 16 (entorno Railway).
 - **Documentación de endpoints:** Swagger UI.
 - **Verificación de salud:** Spring Boot Actuator, mediante `/actuator/health`.
 
@@ -87,103 +88,99 @@ Código fuente relacionado con alimentos:
 
 Para revisar los parámetros y formatos de solicitud y respuesta, consulta Swagger UI.
 
-## Pipeline CI/CD con GitHub Actions
+---
 
-El proyecto utiliza GitHub Actions para automatizar la validación, construcción y despliegue del backend. El workflow se encuentra en `.github/workflows/main.yml`.
+## 1. Arquitectura e Integración CI/CD
 
-### Etapas del pipeline
+El proyecto utiliza **GitHub Actions** (`.github/workflows/main.yml`) para automatizar las validaciones de calidad, auditoría de seguridad, construcción de contenedores y despliegue en **AWS ECS Fargate** con **Service Connect** y monitoreo en **AWS CloudWatch**.
 
-1. **Integración continua:** los cambios subidos a la rama `main` activan el workflow. También se ejecutan validaciones para solicitudes de integración a `main`, según los eventos configurados.
-2. **Compilación y pruebas:** Maven ejecuta `./mvnw -B clean verify` para compilar el proyecto y ejecutar las pruebas automatizadas.
-3. **Cobertura:** JaCoCo genera el reporte de cobertura de pruebas.
-4. **Calidad del código:** SonarCloud analiza el código y permite identificar problemas de calidad.
-5. **Seguridad de dependencias:** Dependabot permite detectar dependencias vulnerables y proponer actualizaciones cuando está habilitado en el repositorio.
-6. **Construcción de imagen:** Docker Buildx construye la imagen usando `backend/Dockerfile`.
-7. **Publicación:** la imagen se publica en Docker Hub con una etiqueta basada en el SHA del commit y con la etiqueta `latest`.
-8. **Despliegue:** Docker Compose levanta los servicios definidos para el entorno de despliegue simulado.
-9. **Verificación:** se comprueba la disponibilidad de PostgreSQL y que Spring Boot responda correctamente.
-10. **Notificación de errores:** cuando se cumplen las condiciones configuradas, el workflow intenta generar una incidencia de GitHub con los resultados de los trabajos.
+### Flujo completo del pipeline (Commit a ECS Fargate + Service Connect)
 
-Los trabajos del pipeline se relacionan mediante dependencias, de modo que las etapas posteriores no continúan si falla una etapa obligatoria de la que dependen.
-
-## Docker y orquestación de contenedores
-
-Docker permite empaquetar el backend y sus dependencias en una imagen reproducible. El archivo `backend/Dockerfile` define la construcción de la imagen Java y la ejecución de Spring Boot.
-
-Docker Compose coordina los servicios del entorno de despliegue:
-
-- **Aplicación Spring Boot:** ejecuta el backend en el puerto interno `8080`.
-- **PostgreSQL 16:** proporciona la base de datos para la aplicación.
-
-La configuración de despliegue contempla dos instancias del contenedor de la aplicación. Esto permite ejecutar más de una instancia del backend, mientras Docker Compose coordina los servicios definidos.
-
-Docker Hub almacena las imágenes construidas y permite identificar una versión mediante la etiqueta SHA asociada al commit.
+1. **Disparador y control de rama (`push` y `pull_request` hacia `main`):**
+   - Cada `pull_request` hacia `main` ejecuta obligatoriamente el job `1. Calidad, Cobertura y Seguridad (Policy Gate)`. Mediante reglas de protección de rama (*Branch Protection Rules*), GitHub bloquea el botón de *Merge* si este job falla.
+   - Al integrar cambios en `main` (`push`), se ejecuta primero el *Policy Gate* y, solo si supera todas las validaciones, se habilita el job `2. Build, Auditoría Contenedor y Despliegue en AWS ECS`.
+2. **Pruebas unitarias y cálculo de cobertura (Maven + JaCoCo):**
+   - Se configura JDK 21 (Temurin) y se ejecuta `mvn test jacoco:report` dentro de `backend/`.
+   - Un script extrae el porcentaje de cobertura de instrucciones desde `target/site/jacoco/jacoco.csv` y lo exporta como salida del job (`coverage`).
+3. **Análisis estático y Quality Gate (SonarCloud — Bloqueante):**
+   - Se ejecuta `mvn sonar:sonar -Dsonar.qualitygate.wait=true`. El pipeline espera el veredicto de SonarCloud sobre código nuevo, bugs, vulnerabilidades y cobertura; si el Quality Gate falla, el flujo se detiene.
+4. **Auditoría de vulnerabilidades en código y dependencias (Trivy — Bloqueante):**
+   - Se ejecuta `trivy fs --severity CRITICAL,HIGH --exit-code 1 backend`, deteniendo el pipeline ante hallazgos críticos o altos antes de construir la imagen.
+5. **Construcción, auditoría de imagen y publicación en Amazon ECR:**
+   - En el segundo job, tras autenticar credenciales AWS (`us-east-1`), se construye la imagen Docker de `./backend` etiquetada con `${{ github.sha }}`.
+   - Antes de subirla al registro, se audita la imagen compilada mediante `trivy image --severity CRITICAL --ignore-unfixed --exit-code 1` y, si aprueba, se publica en el repositorio **Amazon ECR** (`supletanes-app`).
+6. **Orquestación en AWS ECS Fargate + Service Connect:**
+   - El script `backend/infra/ecs/render.sh` genera las definiciones de tareas y servicios (`td-mysql.json`, `td-app.json`, `td-client.json` y sus respectivos `svc-*.json`).
+   - Se registran las definiciones de tareas y se despliegan/actualizan los servicios en el clúster `supletanes-ecs` bajo el namespace interno `supletanes.local` (**ECS Service Connect**), permitiendo la comunicación por nombre de servicio entre `supletanes-app`, `mysql` y `client`.
+   - Se espera la estabilización de cada servicio mediante `aws ecs wait services-stable`.
+7. **Observabilidad y métricas personalizadas (AWS CloudWatch):**
+   - Se actualiza el dashboard `Dashboard-Mesh-supletanes` (`aws cloudwatch put-dashboard`) y se publican métricas personalizadas bajo el namespace `Supletanes/CICD`: duración del despliegue (`DeploymentDurationSeconds`) y porcentaje de cobertura (`TestCoveragePercent`).
 
 ### Herramientas y entornos
 
 | Herramienta | Función |
 |---|---|
-| GitHub | Repositorio y control de versiones |
-| GitHub Actions | Automatización del pipeline CI/CD |
-| Maven | Compilación y ejecución de pruebas |
-| JaCoCo | Reporte de cobertura |
-| SonarCloud | Análisis de calidad del código |
-| Dependabot | Alertas y actualizaciones de dependencias, si está habilitado |
-| Docker | Construcción y ejecución de contenedores |
-| Docker Hub | Registro de imágenes Docker |
-| Docker Compose | Coordinación de la aplicación y PostgreSQL |
-| PostgreSQL | Persistencia de datos |
-| Railway | Alojamiento público del backend |
+| GitHub y Branch Protection | Control de versiones y bloqueo de *Merge* hacia `main` |
+| GitHub Actions | Orquestación automatizada del pipeline CI/CD |
+| Maven y JaCoCo | Compilación, pruebas unitarias y reporte de cobertura |
+| SonarCloud | Análisis estático de código y *Quality Gate* bloqueante |
+| Trivy | Auditoría de vulnerabilidades en código/dependencias (`fs`) e imagen Docker (`image`) |
+| Docker y Amazon ECR | Empaquetado y almacenamiento versionado por SHA de commit |
+| AWS ECS Fargate + Service Connect | Orquestación de contenedores (`supletanes-app`, `mysql`, `client`) y descubrimiento de servicios en `supletanes.local` |
+| AWS CloudWatch | Logs de contenedores, alarmas (`Supletanes-5XX-Critico`), métricas personalizadas y dashboard (`Dashboard-Mesh-supletanes`) |
+| MySQL / PostgreSQL | Persistencia de datos en ECS Fargate / Railway |
 
-El pipeline utiliza Docker Compose como entorno de despliegue simulado. La URL de Railway corresponde al backend público indicado en este documento; no implica que el workflow de GitHub Actions despliegue automáticamente en Railway.
+### Evidencias de Ejecución, Despliegue y Bloqueo (IE1, IE2, IE3, IE5, IE6)
 
-## Pruebas y manejo de errores
+> *(Ajustar nombres de archivo según las capturas guardadas en `docs/evidencias/`)*
 
-### Caso correcto
+- **Pipeline CI/CD completo en verde en `main`:**
+  ![Pipeline CI/CD en verde](docs/evidencias/pipeline-verde.png)
+- **Servicios activos en AWS ECS Fargate + Service Connect (`supletanes-ecs`):**
+  ![Servicios ECS Fargate](docs/evidencias/ecs-servicios.png)
+- **Dashboard de observabilidad en AWS CloudWatch (`Dashboard-Mesh-supletanes`):**
+  ![Dashboard CloudWatch](docs/evidencias/cloudwatch-dashboard.png)
+- **Alarma `Supletanes-5XX-Critico` activada ante caída simulada de MySQL (`503 Service Unavailable`):**
+  ![Alarma 5XX CloudWatch](docs/evidencias/cloudwatch-alarma-5xx.png)
+- **Bloqueo automático del Policy Gate en Pull Request ante falla de calidad/seguridad (IE6):**
+  ![Bloqueo Policy Gate PR](docs/evidencias/policy-gate-bloqueo.png)
 
-1. Se realiza un commit y se suben los cambios a la rama `main`.
-2. GitHub Actions ejecuta la compilación, las pruebas y los análisis configurados.
-3. Si las validaciones obligatorias pasan, se construye y publica la imagen Docker.
-4. El pipeline levanta los servicios mediante Docker Compose.
-5. Se comprueba que Spring Boot responda correctamente y que los servicios necesarios estén disponibles.
+---
 
-**Resultado esperado:** la ejecución termina correctamente y permite verificar la relación entre el commit, la imagen Docker y el despliegue.
+## 2. Toma de Decisiones Técnicas (IE4)
 
-### Caso de error controlado
+La integración de métricas en **AWS CloudWatch** (`Dashboard-Mesh-supletanes` y namespace `Supletanes/CICD`) junto con los reportes del pipeline permite tomar decisiones operativas y de ingeniería basadas en evidencia:
 
-El workflow permite ejecutar una prueba manual mediante `workflow_dispatch`, seleccionando `error` en el parámetro `modo_prueba`.
+- **Uso de CPU y Memoria en ECS Fargate (Escalamiento de réplicas o recursos):**
+  - El monitoreo continuo del consumo de CPU y memoria de las tareas `supletanes-app` y `mysql` permite identificar saturación ante picos de tráfico. Si el uso sostenido supera umbrales críticos (por ejemplo, >75-80% de CPU o memoria), se decide aumentar el `desired-count` de tareas en el servicio ECS para distribuir la carga o ajustar la asignación de vCPU/RAM en la definición de tarea (`td-app.json`).
+- **Errores HTTP 5XX y Logs de aplicación (Detección de caídas de base de datos):**
+  - Mediante el seguimiento de respuestas `5XX` (como el error `503 Service Unavailable` — `"Base de datos no disponible"` observado al detener el servicio `mysql` a `desired-count 0`) y la alarma `Supletanes-5XX-Critico`, el equipo detecta de inmediato indisponibilidad en la capa de persistencia o fallos de conexión en el pool de Spring Boot. Al cruzar la alerta con los logs centralizados en CloudWatch Logs y las métricas de Service Connect, se diferencia rápidamente si el problema proviene de una caída del contenedor `mysql`, un timeout de red o una excepción no controlada en un endpoint específico.
+- **Tiempo de despliegue (`DeploymentDurationSeconds`) (Optimización del ciclo de entrega):**
+  - Registrar la duración total desde la generación de manifiestos hasta que `aws ecs wait services-stable` confirma la estabilidad del servicio permite detectar degradaciones en el tiempo de arranque de Spring Boot, demoras en la descarga de imágenes desde ECR o problemas en los *health checks*. Un incremento anómalo en esta métrica indica la necesidad de optimizar el `Dockerfile` (capas y tamaño de imagen) o revisar los tiempos de inicialización de la aplicación.
+- **Cobertura JaCoCo (`TestCoveragePercent`) y Quality Gate de SonarCloud (Prevención de regresiones):**
+  - Monitorear la evolución del porcentaje de cobertura en cada despliegue y bloquear integraciones mediante SonarCloud y Trivy evita que código sin pruebas unitarias o con vulnerabilidades `HIGH`/`CRITICAL` llegue a producción. Si la cobertura tiende a la baja tras incorporar nuevas funcionalidades, se prioriza la creación de tests antes de continuar agregando características.
 
-1. Se abre la pestaña **Actions** del repositorio.
-2. Se selecciona el workflow CI/CD.
-3. Se presiona **Run workflow**.
-4. Se selecciona `error` en `modo_prueba`.
-5. Se ejecuta el workflow y se revisa el resultado.
+---
 
-La prueba provoca intencionalmente un error para comprobar que GitHub Actions identifica el fallo, marca la ejecución como fallida y activa el mecanismo de notificación configurado. También genera el artefacto `error-controlado-log`.
+## 3. Declaración de Uso de Inteligencia Artificial
 
-Esta prueba manual no cancela por sí sola un commit ni bloquea automáticamente un merge. Para impedir la integración de cambios que no superen las validaciones, se deben configurar las comprobaciones obligatorias y las reglas de protección de la rama en GitHub.
+## 3. Declaración de Uso de Inteligencia Artificial
 
-## Trazabilidad
+Se utilizaron herramientas de apoyo basadas en Inteligencia Artificial únicamente para consultar sintaxis puntual de comandos (AWS CLI y expresiones en GitHub Actions) y revisar la redacción técnica de este documento. Todas las configuraciones, pruebas y análisis técnicos fueron desarrollados y validados directamente por el equipo en el entorno real de AWS y GitHub.
 
-La trazabilidad se mantiene mediante:
+---
 
-- El historial de commits del repositorio.
-- Los resultados de cada ejecución de GitHub Actions.
-- Las etiquetas SHA de las imágenes publicadas en Docker Hub.
-- Los resultados de la verificación posterior al despliegue.
+## 4. Reflexiones Individuales Obligatorias (sin IA)
 
-Esto permite relacionar el código enviado con las validaciones ejecutadas, la imagen construida y la versión desplegada.
+### Reflexión — Christopher Espinoza
 
-## Seguridad y dependencias
+> *[Completar aquí con tu reflexión personal redactada sin apoyo de IA, explicando tu aprendizaje y aporte técnico al proyecto].*
 
-El pipeline incorpora controles para mejorar la calidad y seguridad del proyecto:
+### Reflexión — [Nombre del segundo integrante]
 
-- **SonarCloud:** análisis de calidad del código.
-- **Dependabot:** alertas y propuestas de actualización de dependencias cuando está habilitado.
-- **GitHub Actions:** ejecución automatizada de validaciones y control del avance entre trabajos.
-- **Secretos de GitHub:** almacenamiento de credenciales y tokens utilizados por el workflow, evitando incluirlos directamente en el código.
+> *[Completar aquí con la reflexión personal del segundo integrante redactada sin apoyo de IA, explicando su aprendizaje y aporte técnico al proyecto].*
 
-Las alertas y las comprobaciones deben configurarse de acuerdo con las políticas de seguridad del repositorio. Dependabot no bloquea automáticamente el despliegue por el solo hecho de estar habilitado.
+---
 
 ## Cómo utilizar la aplicación
 
@@ -204,28 +201,24 @@ Las alertas y las comprobaciones deben configurarse de acuerdo con las política
 
 ### Ejecución del pipeline
 
-**Caso normal:**
+**Flujo normal en `main`:**
 
-1. Realizar un commit.
-2. Subir los cambios a `main`.
-3. Abrir la pestaña **Actions**.
-4. Revisar las pruebas, los análisis, la construcción de la imagen y el despliegue.
+1. Realizar un commit o integrar un Pull Request aprobado en `main`.
+2. Abrir la pestaña **Actions** en GitHub.
+3. Revisar la ejecución de `1. Calidad, Cobertura y Seguridad (Policy Gate)` (JaCoCo, SonarCloud y Trivy) y `2. Build, Auditoría Contenedor y Despliegue en AWS ECS`.
+4. Verificar los servicios activos en AWS ECS y las métricas en el dashboard `Dashboard-Mesh-supletanes` de CloudWatch.
 
-**Caso de error controlado:**
+**Demostración de bloqueo en Pull Request:**
 
-1. Abrir **Actions**.
-2. Seleccionar el workflow CI/CD.
-3. Presionar **Run workflow**.
-4. Seleccionar `error` en `modo_prueba`.
-5. Revisar el trabajo fallido y el artefacto de registro.
+1. Crear una rama (por ejemplo, `feat/test-falla-seguridad`) e introducir una falla de calidad, cobertura o seguridad.
+2. Abrir un Pull Request hacia `main`.
+3. Verificar en GitHub que el job `1. Calidad, Cobertura y Seguridad (Policy Gate)` falla en rojo y bloquea el botón de *Merge* hacia `main`.
 
 ## Objetivos del pipeline
 
-- Automatizar la compilación y las pruebas del backend.
-- Incorporar análisis de calidad y controles de seguridad.
-- Contenerizar el microservicio para facilitar su ejecución reproducible.
-- Coordinar la aplicación y la base de datos mediante Docker Compose.
-- Automatizar la construcción y publicación de imágenes Docker.
-- Verificar el funcionamiento de la aplicación después del despliegue.
-- Mantener trazabilidad desde el commit hasta la imagen publicada.
-- Comprobar el manejo de fallos mediante una prueba de error controlado.
+- Automatizar la compilación y las pruebas unitarias del backend con reporte de cobertura JaCoCo.
+- Incorporar análisis estático bloqueante con SonarCloud y auditoría de vulnerabilidades con Trivy.
+- Contenerizar el microservicio y publicar imágenes versionadas por SHA en Amazon ECR.
+- Orquestar los contenedores en AWS ECS Fargate con descubrimiento de servicios mediante Service Connect.
+- Centralizar logs, alarmas (`Supletanes-5XX-Critico`), dashboard (`Dashboard-Mesh-supletanes`) y métricas CI/CD en AWS CloudWatch.
+- Garantizar la protección de la rama `main` deteniendo el flujo automáticamente ante fallas críticas de calidad o seguridad.
