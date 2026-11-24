@@ -19,6 +19,7 @@
         <tomcat.version>10.1.59</tomcat.version>
         <jackson-bom.version>2.22.3</jackson-bom.version>
         <spring-framework.version>6.2.19</spring-framework.version>
+        <spring-data-commons.version>3.5.12</spring-data-commons.version>
         <micrometer.version>1.15.12</micrometer.version>
         <sonar.projectKey>ChristopherEspinozaB_Evaluacion3_DevOps</sonar.projectKey>
         <sonar.organization>christopherespinozab</sonar.organization>
