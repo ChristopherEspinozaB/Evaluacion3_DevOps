@@ -1,0 +1,3 @@
+# Requieren Spring Framework 7.0.9 (fuera de la rama Spring Boot 3.5.x / Spring 6.2.19)
+CVE-2026-47884
+CVE-2026-47890
