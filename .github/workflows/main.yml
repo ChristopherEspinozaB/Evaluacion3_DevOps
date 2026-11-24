@@ -39,7 +39,11 @@ jobs:
         id: jacoco
         working-directory: backend
         run: |
-          COV=$(awk -F"," 'NR>1 { instructions += $4 + $5; covered += $5 } END { if (instructions > 0) printf "%.2f", 100*covered/instructions; else print "0" }' target/site/jacoco/jacoco.csv)
+          if [ -f target/site/jacoco/jacoco.csv ]; then
+            COV=$(awk -F"," 'NR>1 { instructions += $4 + $5; covered += $5 } END { if (instructions > 0) printf "%.2f", 100*covered/instructions; else print "0" }' target/site/jacoco/jacoco.csv)
+          else
+            COV="0"
+          fi
           echo "Cobertura calculada: ${COV}%"
           echo "coverage=${COV}" >> $GITHUB_OUTPUT
 
@@ -56,12 +60,9 @@ jobs:
             -Dsonar.qualitygate.wait=true
 
       - name: Auditoría de vulnerabilidades en código y dependencias (Trivy - Bloqueante)
-        uses: aquasecurity/trivy-action@0.28.0
-        with:
-          scan-type: 'fs'
-          scan-ref: 'backend'
-          severity: 'CRITICAL,HIGH'
-          exit-code: '1'
+        run: |
+          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sudo sh -s -- -b /usr/local/bin
+          trivy fs --severity CRITICAL,HIGH --exit-code 1 backend
 
   deploy-aws:
     name: 2. Build, Auditoría Contenedor y Despliegue en AWS ECS
@@ -92,13 +93,12 @@ jobs:
           docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG ./backend
 
       - name: Auditoría de seguridad de la imagen Docker (Trivy - Bloqueante)
-        uses: aquasecurity/trivy-action@0.28.0
-        with:
-          image-ref: '${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}'
-          format: 'table'
-          exit-code: '1'
-          ignore-unfixed: true
-          severity: 'CRITICAL'
+        env:
+          IMAGE_TAG: ${{ github.sha }}
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        run: |
+          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sudo sh -s -- -b /usr/local/bin
+          trivy image --severity CRITICAL --ignore-unfixed --exit-code 1 $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
 
       - name: Push imagen a Amazon ECR
         env:
