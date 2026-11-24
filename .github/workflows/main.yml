@@ -134,15 +134,20 @@ jobs:
       - name: Desplegar servicios en ECS Fargate + Service Connect y medir tiempo
         working-directory: backend
         env:
-          ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
-          SUBNET1: ${{ secrets.AWS_SUBNET1 }}
-          SUBNET2: ${{ secrets.AWS_SUBNET2 }}
-          SG_ID: ${{ secrets.AWS_SG_ID }}
           IMAGE_URI: ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}
           COVERAGE: ${{ needs.quality-and-security.outputs.coverage }}
         run: |
           START_TIME=$(date +%s)
+          export ACCOUNT_ID=$(aws sts get-caller-identity --query 'Account' --output text)
           export LAB_ROLE_ARN="arn:aws:iam::${ACCOUNT_ID}:role/LabRole"
+
+          DEFAULT_VPC=$(aws ec2 describe-vpcs --filters "Name=isDefault,Values=true" --region $AWS_REGION --query 'Vpcs[0].VpcId' --output text)
+          export SUBNET1=$(aws ec2 describe-subnets --filters "Name=vpc-id,Values=$DEFAULT_VPC" --region $AWS_REGION --query 'Subnets[0].SubnetId' --output text)
+          export SUBNET2=$(aws ec2 describe-subnets --filters "Name=vpc-id,Values=$DEFAULT_VPC" --region $AWS_REGION --query 'Subnets[1].SubnetId' --output text)
+          export SG_ID=$(aws ec2 describe-security-groups --filters "Name=vpc-id,Values=$DEFAULT_VPC" "Name=group-name,Values=default" --region $AWS_REGION --query 'SecurityGroups[0].GroupId' --output text)
+
+          aws ec2 authorize-security-group-ingress --group-id "$SG_ID" --protocol -1 --source-group "$SG_ID" --region $AWS_REGION 2>/dev/null || true
+          aws ec2 authorize-security-group-ingress --group-id "$SG_ID" --protocol tcp --port 8080 --cidr 0.0.0.0/0 --region $AWS_REGION 2>/dev/null || true
 
           aws logs create-log-group --log-group-name "/ecs/supletanes" --region $AWS_REGION 2>/dev/null || true
 
